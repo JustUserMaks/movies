@@ -21,7 +21,6 @@ class Film(models.Model):
     imdb_reviews = models.PositiveSmallIntegerField(null=True, blank=True)
 
 
-
 class Country(models.Model):
     name = models.CharField(max_length=100)
     slug = models.SlugField(unique=True)
