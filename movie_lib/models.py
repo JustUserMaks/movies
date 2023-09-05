@@ -10,15 +10,39 @@ class Film(models.Model):
     poster = models.ImageField(upload_to='posters')
     poster_url = models.URLField()
     description = models.TextField()
-    trailer_link = models.URLField(blank=True, default='')
+    trailer_link = models.URLField(
+        blank=True,
+        default=''
+    )
     release_year = models.CharField(max_length=4)
-    countries = models.ManyToManyField('Country', related_name='films')
-    genres = models.ManyToManyField('Genre', related_name='films')
-    director = models.ForeignKey('Director', on_delete=models.PROTECT)
-    actors = models.ManyToManyField('Actor', related_name='films')
-    duration = models.PositiveSmallIntegerField(null=True, blank=True)
-    rating = models.FloatField(null=True, blank=True)
-    imdb_reviews = models.PositiveSmallIntegerField(null=True, blank=True)
+    countries = models.ManyToManyField(
+        'Country',
+        related_name='films'
+    )
+    genres = models.ManyToManyField(
+        'Genre',
+        related_name='films'
+    )
+    director = models.ManyToManyField(
+        'Director',
+        related_name='films'
+    )
+    actors = models.ManyToManyField(
+        'Actor',
+        related_name='films'
+    )
+    duration = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True
+    )
+    rating = models.FloatField(
+        null=True,
+        blank=True
+    )
+    imdb_reviews = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True
+    )
 
 
 class Country(models.Model):
