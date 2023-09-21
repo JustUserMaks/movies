@@ -1,7 +1,7 @@
 from time import perf_counter
 
 from django.core.management import BaseCommand, CommandError
-from movie_lib.services.scrape import main
+from movie_lib.services.one_scrape import main
 
 
 class Command(BaseCommand):

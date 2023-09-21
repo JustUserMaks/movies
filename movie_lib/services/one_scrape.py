@@ -70,34 +70,6 @@ def request_to_url(url):
     return html_string.text
 
 
-def get_pagination_pages(url: str) -> list[str]:
-    pages_html = []
-    counter = 1
-    while counter <= 5:
-        response = request_to_url(url)
-        # print(len(response))
-        pages_html.append(response)  # Append the html_string from page to the list
-        response = HTMLParser(response)
-        parse_next_url = response.css_first('.pnext a')
-        if parse_next_url:
-            url = parse_next_url.attributes.get('href')
-            counter += 1
-        else:
-            break  # Exit the loop if there's no next URL
-    return pages_html
-
-
-def parse_site_pages(html_string: str) -> list:
-    tree = HTMLParser(html_string)
-    movie_pages = tree.css('.movie-item.short-item a.movie-title')
-    movies_from_page = []  # List to store every [title, link] pair from html to the list
-    for movie in movie_pages:
-        title = movie.text(strip=True)
-        link = movie.attributes.get('href')
-        movies_from_page.append([title, link])  # Append each [title, link] pair to the list
-    return movies_from_page
-
-
 # Function for extracting additional content
 def add_content_extract(additional_info: list) -> dict | None:
     result = {}
@@ -116,7 +88,8 @@ def add_content_extract(additional_info: list) -> dict | None:
     return result
 
 
-def parse_page(html_string: str) -> dict:
+def parse_page(url: str) -> dict:
+    html_string = request_to_url(url)
     tree = HTMLParser(html_string)
 
     # extract original title
@@ -217,54 +190,73 @@ def parse_page(html_string: str) -> dict:
 
 
 def save_movie_poster_locally(poster_link: str, title: str) -> str:
-
-    with httpx.Client() as client:
-        response = client.get(poster_link)
-        response.raise_for_status()
-
-        if response.status_code == 404:  # Check if poster is available for download if 404 - return None
-            logger.warning('Poster image for %s not found (404)', title)
-            return None
-
-        # Generate file name and path
-        file_name = f'posters/{slugify(anyascii(title))}.jpg'
-        file_path = f'media/{file_name}'
-
-        # Save the image locally
-        with open(file_path, 'wb') as file:
-            file.write(response.content)
-
-        return file_name  # Return the saved file name
-
-
-def save_movie_snaps_locally(snap_links: list, title: str, film: Film) -> list:
-    saved_file_names = []  # Initialize a list to store saved file names
-
-    for i, snap in enumerate(snap_links, start=1):
+    try:
         with httpx.Client() as client:
-            response = client.get(snap)
-            if response.status_code == 404:
-                logger.warning('Snap image %d for %s not found (404)', i, title)
-                continue
-
+            response = client.get(poster_link)
             response.raise_for_status()
 
+            if response.status_code == 404:
+                logger.warning('Poster image for %s not found (404)', title)
+                return None
+
             # Generate file name and path
-            file_name = f'snaps/{slugify(anyascii(title))}-{i}.jpg'
+            file_name = f'posters/{slugify(anyascii(title))}.jpg'
             file_path = f'media/{file_name}'
 
             # Save the image locally
             with open(file_path, 'wb') as file:
                 file.write(response.content)
 
-            Snap.objects.create(
-                image=file_name,
-                url=snap,
-                film=film
+            return file_name  # Return the saved file name
+    except Exception as exc:
+        logger.exception(
+            'An error occurred while saving the poster for %s: %s',
+            title,
+            exc
+        )
+        return None  # Return None if there's an error saving the poster
+
+
+def save_movie_snaps_locally(snap_links: list, title: str, film: Film) -> list:
+    saved_file_names = []  # Initialize a list to store saved file names
+
+    for i, snap in enumerate(snap_links, start=1):
+        try:
+            with httpx.Client() as client:
+                response = client.get(snap)
+
+                # Check if the response status code is 404 (Not Found)
+                if response.status_code == 404:
+                    logger.warning('Snap image %d for %s not found (404)', i, title)
+
+                response.raise_for_status()
+
+                # Generate file name and path
+                file_name = f'snaps/{slugify(anyascii(title))}-{i}.jpg'
+                file_path = f'media/{file_name}'
+
+                # Save the image locally
+                with open(file_path, 'wb') as file:
+                    file.write(response.content)
+
+                Snap.objects.create(
+                    image=file_name,
+                    url=snap,
+                    film=film
+                )
+
+                saved_file_names.append(file_name)  # Add the saved file name to the list
+        except Exception as exc:
+            logger.exception(
+                'An error occurred while saving snap %d for %s: %s',
+                i,
+                title,
+                exc
             )
-    return saved_file_names  # Return the list of saved file names
+    return saved_file_names
 
 
+@try_except_decorator
 @transaction.atomic
 def write_to_db(data: dict) -> None:
     file_name = save_movie_poster_locally(data['Poster_link'], data['Title'])
@@ -343,102 +335,11 @@ def write_to_db(data: dict) -> None:
     logger.info('Object "%s" written to db', data['Title'])
 
 
-# Worker for parsing html
-def worker(qu: Queue):
-    while not qu.empty():
-        page = qu.get()
-        try:
-            result = get_pagination_pages(page)
-            with lock:
-                site_pages.extend(result)  # Extend the list with html of every page
-        except Exception as error:
-            logger.exception('Parsing page, error occurred %s',
-                             error
-                             )
-
-
-# Worker for parsing pagination page
-def worker_1(qu: Queue) -> None:
-    while not qu.empty():
-        page = qu.get()
-        try:
-            result = parse_site_pages(page)
-            with lock:
-                movie_pages_list.extend(result)  # Extend the list with all [title, link] pairs
-        except Exception as error:
-            logger.exception('Parsing page error occurred %s', error)
-
-@try_except_decorator
-# Worker for movie pages parsing and writing to csv
-def worker_2(qu: Queue) -> None:
-    counter = 0
-    processed_urls = set()
-    while not qu.empty():
-        url = qu.get()
-        if url in processed_urls:
-            continue
-        try:
-            response = request_to_url(url)
-            data = parse_page(response)
-            with lock:
-                write_to_db(data)
-                counter += 1
-            processed_urls.add(url)
-        except (
-                httpx.RequestError,
-                httpx.Timeout,
-                httpx.ConnectError,
-                httpx.RequestError,
-        ) as error:
-            logger.exception('%s, url %s', error, url)
-            qu.put(url)
-        except Exception as error:
-            logger.exception('Url %s %s', url, error)
-    logger.info('%s elements are written to data base', counter)
-
-
 def main():
     # Main enter links
-    site_links = [
-        'https://uakino.club/filmy/',
-        'https://uakino.club/seriesss/',
-        'https://uakino.club/cartoon/'
-    ]
-
-    # Creating sites (main headers) queue
-    sites_queue = Queue()
-    for header in site_links:
-        sites_queue.put(header)
-
-    # Executor which gets html from every pagination page inside header
-    # and stack it inside [site_pages] list
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        for _ in range(2):
-            executor.submit(worker, sites_queue)
-
-    # Creating queue for getting list of movies and titles
-    # located at one pagination page
-    page_queue = Queue()
-    for page in site_pages:
-        page_queue.put(page)
-
-    # Parsing HTML pages from queue to get list [movie_pages_list] with
-    # (Title, Link) for every movie inside
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        for _ in range(2):
-            executor.submit(worker_1, page_queue)
-
-    # Creation of queue for parsing of every movie in [movie_pages_link]
-    # which consist only of links to movie
-    movie_link_queue = Queue()
-
-    for link in movie_pages_list[:50]:
-        movie_link_queue.put(link[1])
-
-    # Parsing movie page for links in [movie_link_queue] with writing to csv...
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        for _ in range(3):
-            executor.submit(worker_2, movie_link_queue)
+    url = 'https://uakino.club/seriesss/drama_series/16783-psi-doschu-1-sezon.html'
+    parsed_data = parse_page(url)
+    write_to_db(parsed_data)
 
     logger.info('Parsing complete')
 

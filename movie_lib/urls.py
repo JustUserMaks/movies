@@ -1,9 +1,9 @@
 from django.urls import path
 
-from . views import index, error_page, upcoming_movie
+from . views import IndexView, CatalogueView, movie
 
 urlpatterns = [
-    path('', index, name='index'),
-    path('', error_page, name='404'),
-    path('', upcoming_movie, name='upcoming_movie')
+    path('', IndexView.as_view(), name='index'),
+    path('movie/', movie, name='movie'),
+    path('catalogue/<slug:slug>/', CatalogueView.as_view(), name='catalogue'),
 ]

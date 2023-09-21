@@ -44,6 +44,8 @@ class Film(models.Model):
         blank=True
     )
 
+    def __str__(self):
+        return self.title
 
 class Country(models.Model):
     name = models.CharField(max_length=100)
@@ -88,5 +90,5 @@ class Snap(models.Model):
                              )
 
     def __str__(self):
-        return self.url
+        return self.image.url
 
